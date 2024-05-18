@@ -128,9 +128,9 @@ for epoch in range(args.max_epochs):
         if (batch_idx +1) % args.print_every == 0 : 
             deno = args.print_every * args.batch_size * np.prod(obs) * np.log(2.)
             writer.add_scalar('train/bpd', (train_loss / deno), writes)
-            print('loss : {:.4f}, time : {:.4f}'.format(
+            print(('loss : {:.4f}, time : {:.4f}'.format(
                 (train_loss / deno), 
-                (time.time() - time_)))
+                (time.time() - time_))))
             train_loss = 0.
             writes += 1
             time_ = time.time()
@@ -152,7 +152,7 @@ for epoch in range(args.max_epochs):
 
     deno = batch_idx * args.batch_size * np.prod(obs) * np.log(2.)
     writer.add_scalar('test/bpd', (test_loss / deno), writes)
-    print('test loss : %s' % (test_loss / deno))
+    print(('test loss : %s' % (test_loss / deno)))
     
     if (epoch + 1) % args.save_interval == 0: 
         torch.save(model.state_dict(), 'models/{}_{}.pth'.format(model_name, epoch))

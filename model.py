@@ -170,4 +170,4 @@ if __name__ == '__main__':
     model = model.cuda()
     out = model(x_v)
     loss = discretized_mix_logistic_loss(x_v, out)
-    print('loss : %s' % loss.data[0])
+    print(('loss : %s' % loss.data[0]))
