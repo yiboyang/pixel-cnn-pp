@@ -56,7 +56,7 @@ class PixelCNNLayer_down(nn.Module):
          
 
 class PixelCNN(nn.Module):
-    def __init__(self, nr_resnet=5, nr_filters=80, nr_logistic_mix=10, 
+    def __init__(self, nr_resnet=5, nr_filters=80, nr_logistic_mix=11, 
                     resnet_nonlinearity='concat_elu', input_channels=3):
         super(PixelCNN, self).__init__()
         if resnet_nonlinearity == 'concat_elu' : 
@@ -153,14 +153,16 @@ class PixelCNN(nn.Module):
 if __name__ == '__main__':
     ''' testing loss with tf version '''
     np.random.seed(1)
-    xx_t = (np.random.rand(15, 32, 32, 100) * 3).astype('float32')
-    yy_t  = np.random.uniform(-1, 1, size=(15, 32, 32, 3)).astype('float32')
+    xx_t = (np.random.rand(15, 70, 32, 32) * 3).astype('float32')
+    yy_t  = np.random.uniform(-1, 1, size=(15, 3, 32, 32)).astype('float32')
     x_t = Variable(torch.from_numpy(xx_t)).cuda()
     y_t = Variable(torch.from_numpy(yy_t)).cuda()
     loss = discretized_mix_logistic_loss(y_t, x_t)
+    print(loss)
+    print()
    
     ''' testing model and deconv dimensions '''
-    x = torch.cuda.FloatTensor(32, 3, 32, 32).uniform_(-1., 1.)
+    x = torch.cuda.FloatTensor(5, 3, 32, 32).uniform_(-1., 1.)
     xv = Variable(x).cpu()
     ds = down_shifted_deconv2d(3, 40, stride=(2,2))
     x_v = Variable(x)
@@ -169,5 +171,7 @@ if __name__ == '__main__':
     model = PixelCNN(nr_resnet=3, nr_filters=100, input_channels=x.size(1))
     model = model.cuda()
     out = model(x_v)
+    print(out.shape)
     loss = discretized_mix_logistic_loss(x_v, out)
-    print(('loss : %s' % loss.data[0]))
+    # print(('loss : %s' % loss.data[0]))
+    print(('loss : %s' % loss.item()))
