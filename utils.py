@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from torch.nn.utils import weight_norm as wn
 import numpy as np
 
+from model import num_mixture_param_groups
 
 def concat_elu(x):
     """ like concatenated ReLU (http://arxiv.org/abs/1603.05201), but then with ELU """
@@ -32,16 +33,24 @@ def log_prob_from_logits(x):
 
 
 def discretized_mix_logistic_loss(x, l):
-    """ log-likelihood for mixture of discretized logistics, assumes the data has been rescaled to [-1,1] interval """
-    # Pytorch ordering
+    """ log-likelihood for mixture of discretized logistics, assumes the data
+    has either 3 or 2 channels, and has been rescaled to [-1,1] interval """
+    # Expects x to have shape [B, C, H, W] (pytorch ordering); we reshape to
+    # tensorflow ordering (channel-last) below.
     x = x.permute(0, 2, 3, 1)
     l = l.permute(0, 2, 3, 1)
     xs = [int(y) for y in x.size()]
     ls = [int(y) for y in l.size()]
    
+    input_channels = xs[-1]
+    assert input_channels in (2, 3)
+    num_mix_params = num_mixture_param_groups(input_channels)
     # here and below: unpacking the params of the mixture of logistics
-    nr_mix = int(ls[-1] / 10) 
+    nr_mix = int(ls[-1] / num_mix_params)
+    assert nr_mix * num_mix_params == ls[-1], "PixelCNN output channels doesn't match number of mixture parameter groups"
+    # nr_mix is the num of mixture components ('nr_logistic_mix' in model.py)
     logit_probs = l[:, :, :, :nr_mix]
+    # from IPython.core.debugger import Pdb; Pdb().set_trace()
     l = l[:, :, :, nr_mix:].contiguous().view(xs + [nr_mix * 3]) # 3 for mean, scale, coef
     means = l[:, :, :, :, :nr_mix]
     # log_scales = torch.max(l[:, :, :, :, nr_mix:2 * nr_mix], -7.)
@@ -51,14 +60,22 @@ def discretized_mix_logistic_loss(x, l):
     # here and below: getting the means and adjusting them based on preceding
     # sub-pixels
     x = x.contiguous()
+    # [B, H, W, C] -> [B, H, W, C, nr_mix] for evaluating prob under each comp.
     x = x.unsqueeze(-1) + Variable(torch.zeros(xs + [nr_mix]).cuda(), requires_grad=False)
+    # See eq(3) of PixelCNN++ paper for below:
     m2 = (means[:, :, :, 1, :] + coeffs[:, :, :, 0, :]
                 * x[:, :, :, 0, :]).view(xs[0], xs[1], xs[2], 1, nr_mix)
+    channel_means = [means[:, :, :, 0, :].unsqueeze(3), m2]
+    if input_channels == 3:
+        m3 = (means[:, :, :, 2, :] + coeffs[:, :, :, 1, :] * x[:, :, :, 0, :] +
+                    coeffs[:, :, :, 2, :] * x[:, :, :, 1, :]).view(xs[0], xs[1], xs[2], 1, nr_mix)
+        channel_means.append(m3)
+    else:
+        # Here coeffs[:, :, :, 1, :] is computed but unused, which is slightly
+        # inefficient but that's OK.
+        pass
 
-    m3 = (means[:, :, :, 2, :] + coeffs[:, :, :, 1, :] * x[:, :, :, 0, :] +
-                coeffs[:, :, :, 2, :] * x[:, :, :, 1, :]).view(xs[0], xs[1], xs[2], 1, nr_mix)
-
-    means = torch.cat((means[:, :, :, 0, :].unsqueeze(3), m2, m3), dim=3)
+    means = torch.cat(channel_means, dim=3)
     centered_x = x - means
     inv_stdv = torch.exp(-log_scales)
     plus_in = inv_stdv * (centered_x + 1. / 255.)
@@ -100,7 +117,8 @@ def discretized_mix_logistic_loss(x, l):
 
 
 def discretized_mix_logistic_loss_1d(x, l):
-    """ log-likelihood for mixture of discretized logistics, assumes the data has been rescaled to [-1,1] interval """
+    """ log-likelihood for mixture of discretized logistics, assumes the data
+    has a single channel (gray-scale) and has been rescaled to [-1,1] interval """
     # Pytorch ordering
     x = x.permute(0, 2, 3, 1)
     l = l.permute(0, 2, 3, 1)
@@ -108,7 +126,10 @@ def discretized_mix_logistic_loss_1d(x, l):
     ls = [int(y) for y in l.size()]
 
     # here and below: unpacking the params of the mixture of logistics
-    nr_mix = int(ls[-1] / 3)
+    input_channels = xs[-1]
+    assert input_channels == 1
+    num_mix_params = num_mixture_param_groups(input_channels)
+    nr_mix = int(ls[-1] / num_mix_params)
     logit_probs = l[:, :, :, :nr_mix]
     l = l[:, :, :, nr_mix:].contiguous().view(xs + [nr_mix * 2]) # 2 for mean, scale
     means = l[:, :, :, :, :nr_mix]
@@ -255,12 +276,12 @@ def right_shift(x, pad=None):
 def load_part_of_model(model, path):
     params = torch.load(path)
     added = 0
-    for name, param in list(params.items()):
-        if name in list(model.state_dict().keys()):
+    for name, param in params.items():
+        if name in model.state_dict().keys():
             try : 
                 model.state_dict()[name].copy_(param)
                 added += 1
             except Exception as e:
                 print(e)
                 pass
-    print(('added %s of params:' % (added / float(len(list(model.state_dict().keys()))))))
+    print('added %s of params:' % (added / float(len(model.state_dict().keys()))))

@@ -55,8 +55,25 @@ class PixelCNNLayer_down(nn.Module):
         return u, ul
          
 
+def num_mixture_param_groups(input_channels):
+    # Figure out how many groups of mixture parameters we will need for
+    # modeling each pixel; used for splitting the PixelCNN output into chunks.
+    # This depends on the number of input channels; for input_channels > 1, 
+    # we will model the sub-pixels autoregressively.
+    # Note we always have a single set of mixing weights shared across all
+    # channels. See section 2.2 of the PixelCNN++ paper for details.
+    if input_channels == 1:
+        return 3    # mixing probs, means, scales
+    elif input_channels == 2:
+        return 7   # 1 set of mixing probs (shared across all channels), (means, scales, coeffs) * 2 channels
+    elif input_channels == 3:
+        return 10   # 1 set of mixing probs (shared across all channels), (means, scales, coeffs) * 3 channels
+    else:
+        raise NotImplementedError
+
+
 class PixelCNN(nn.Module):
-    def __init__(self, nr_resnet=5, nr_filters=80, nr_logistic_mix=11, 
+    def __init__(self, nr_resnet=5, nr_filters=80, nr_logistic_mix=11,
                     resnet_nonlinearity='concat_elu', input_channels=3):
         super(PixelCNN, self).__init__()
         if resnet_nonlinearity == 'concat_elu' : 
@@ -97,8 +114,9 @@ class PixelCNN(nn.Module):
                                        down_right_shifted_conv2d(input_channels + 1, nr_filters, 
                                             filter_size=(2,1), shift_output_right=True)])
     
-        num_mix = 3 if self.input_channels == 1 else 10
-        self.nin_out = nin(nr_filters, num_mix * nr_logistic_mix)
+        # num_mix = 3 if self.input_channels == 1 else 10
+        num_mix_params = num_mixture_param_groups(self.input_channels)
+        self.nin_out = nin(nr_filters, num_mix_params * nr_logistic_mix)
         self.init_padding = None
 
 
@@ -153,6 +171,8 @@ class PixelCNN(nn.Module):
 if __name__ == '__main__':
     ''' testing loss with tf version '''
     np.random.seed(1)
+    # xx_t = (np.random.rand(15, 32, 32, 100) * 3).astype('float32')
+    # yy_t  = np.random.uniform(-1, 1, size=(15, 32, 32, 3)).astype('float32')
     xx_t = (np.random.rand(15, 70, 32, 32) * 3).astype('float32')
     yy_t  = np.random.uniform(-1, 1, size=(15, 3, 32, 32)).astype('float32')
     x_t = Variable(torch.from_numpy(xx_t)).cuda()
@@ -175,3 +195,22 @@ if __name__ == '__main__':
     loss = discretized_mix_logistic_loss(x_v, out)
     # print(('loss : %s' % loss.data[0]))
     print(('loss : %s' % loss.item()))
+    print()
+
+
+    ''' testing input with 2 channels'''
+    ch = 2
+    x = torch.cuda.FloatTensor(5, ch, 32, 32).uniform_(-1., 1.)
+    xv = Variable(x).cpu()
+    ds = down_shifted_deconv2d(ch, 40, stride=(2,2))
+    x_v = Variable(x)
+
+    ''' testing loss compatibility '''
+    model = PixelCNN(nr_resnet=3, nr_filters=100, input_channels=x.size(1))
+    model = model.cuda()
+    out = model(x_v)
+    print(out.shape)
+    loss = discretized_mix_logistic_loss(x_v, out)
+    # print(('loss : %s' % loss.data[0]))
+    print(('loss : %s' % loss.item()))
+    print()
